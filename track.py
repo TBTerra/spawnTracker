@@ -15,6 +15,8 @@ pokes = []
 spawns = []
 Shash = {}
 going = True
+paused = False
+Pfound = 0
 
 #config file
 with open('config.json') as file:
@@ -62,9 +64,16 @@ def doScan(sLat, sLng, sid, api):
 					if wild['spawnpoint_id'] == sid:
 						#print 'found poke'
 						pokes.append({'time':timeSpawn, 'sid':wild['spawnpoint_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'pid':wild['pokemon_data']['pokemon_id'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()})
+						global Pfound
+						Pfound += 1
 					elif wild['spawnpoint_id'] not in Shash:
 						print 'found new spawn'
-						Shash[wild['spawnpoint_id']] = timeSpawn
+						gmSpawn = time.gmtime(timeSpawn//1000)
+						secSpawn = (gmSpawn.tm_min*60)+(gmSpawn.tm_sec)
+						hash = '{},{}'.format(secSpawn,wild['spawnpoint_id'])
+						Shash[wild['spawnpoint_id']] = secSpawn
+						#spawns.insert(SbSearch(secSpawn),{'time':secSpawn, 'sid':wild['spawnpoint_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()})
+						#if timeDif()>0
 						###do somthing here
 
 def curSec():
@@ -97,25 +106,58 @@ def worker(wid,Tthreads):
 	for i in xrange(wid,len(spawns),Tthreads):
 		ownSpawns.append(spawns[i])
 	print 'work list for worker {} is {} scans long'.format(wid,len(ownSpawns))
-	#login
-	api = PGoApi()
-	api.set_position(0,0,0)
-	if not api.login(config['auth_service'], config['users'][wid]['username'], config['users'][wid]['password']):
-		print 'worker {} unable to log in. stoping.'.format(wid)
-		return
 	#find start position
-	pos = SbSearch(ownSpawns, curSec())
-	while timeDif(curSec(),ownSpawns[pos]['time']) < 60:
-		pos = ((pos+len(ownSpawns))-1) % len(ownSpawns)
-	#iterate over
-	while going:
-		if timeDif(curSec(),ownSpawns[pos]['time']) < 840:#if we arnt 14mins too late
-			while timeDif(curSec(),ownSpawns[pos]['time']) < 60:#wait for 1 min past the spawn time
-				time.sleep(1)
-			doScan(ownSpawns[pos]['lat'],ownSpawns[pos]['lng'],ownSpawns[pos]['sid'],api)
+	pos = SbSearch(ownSpawns, (curSec()+60)%3600)
+	#pos = SbSearch(ownSpawns, curSec())
+	#while timeDif(curSec(),ownSpawns[pos]['time']) < 60:
+	#	pos = ((pos+len(ownSpawns))-1) % len(ownSpawns)
+	while True:
+		#login
+		api = PGoApi()
+		api.set_position(0,0,0)
+		if not api.login(config['auth_service'], config['users'][wid]['username'], config['users'][wid]['password']):
+			print 'worker {} unable to log in. stoping.'.format(wid)
+			return
+		#iterate over
+		while not paused:
+			if not going:
+				return
+			if timeDif(curSec(),ownSpawns[pos]['time']) < 840:#if we arnt 14mins too late
+				while timeDif(curSec(),ownSpawns[pos]['time']) < 60:#wait for 1 min past the spawn time
+					time.sleep(1)
+				doScan(ownSpawns[pos]['lat'],ownSpawns[pos]['lng'],ownSpawns[pos]['sid'],api)
+			else:
+				print 'posibly cant keep up. having to drop searches to catch up'
+			pos = (pos+1) % len(ownSpawns)
+		while paused:
+			time.sleep(1)
+
+def saver():
+	print 'started saver thread'
+	while True:
+		time.sleep(3600)#wait 1 hour
+		#tell workers to stop
+		global paused, pokes
+		paused = True
+		time.sleep(0.5)
+		print 'pausing work to save (currently seen {} pokemon)'.format(Pfound)
+		#save the new pokes
+		if os.path.isfile('pokes.json'):
+			with open('pokes.json') as file:
+				temp = json.load(file)
+				temp.extend(pokes)
+				f = open('pokes.json','w')
+				json.dump(temp,f)
+				f.close()
+				file.close()
 		else:
-			print 'posibly cant keep up. having to drop searches to catch up'
-		pos = (pos+1) % len(ownSpawns)
+			f = open('pokes.json','w')
+			json.dump(pokes,f)
+			f.close()
+		#clear poke buffer
+		pokes = []
+		print 'resuming work'
+		paused = False
 
 def main():
 	global spawns, Shash, going
@@ -124,6 +166,7 @@ def main():
 		spawns = json.load(file)
 		file.close()
 	for spawn in spawns:
+		hash = '{},{}'.format(spawn['time'],spawn['sid'])
 		Shash[spawn['sid']] = spawn['time']
 	#sort spawn points
 	spawns.sort(key=itemgetter('time'))
@@ -135,6 +178,8 @@ def main():
 		t = threading.Thread(target=worker, args = (len(threads),len(config['users'])))
 		t.start()
 		threads.append(t)
+	saverT = threading.Thread(target=saver)
+	saverT.start()
 	time.sleep(2)
 	#wait for stop signal
 	while True:
@@ -143,10 +188,10 @@ def main():
 			going = False
 			break
 		elif command == 'prog':
-			print 'currently had {} sightings'.format(len(pokes))
+			print 'currently had {} sightings'.format(Pfound)
 	for t in threads:
 		t.join()
-	print 'tracker stoped, had {} pokemeon sightings'.format(len(pokes))
+	print 'tracker stoped, had {} pokemeon sightings'.format(Pfound)
 	#print to file
 	if os.path.isfile('pokes.json'):
 		with open('pokes.json') as file:
