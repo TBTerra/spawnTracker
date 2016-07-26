@@ -47,8 +47,10 @@ def doScan(sLat, sLng, sid, api):
 	response_dict = api.call()
 	#print 'trying for poke'
 	try:
-		cells = response_dict['responses']['GET_MAP_OBJECTS']['map_cells']
-	except TypeError, KeyError:
+		resp = response_dict['responses']
+		map = resp['GET_MAP_OBJECTS']
+		cells = map['map_cells']
+	except KeyError, TypeError:
 		print ('error getting map data for {}, {}'.format(sLat, sLng))
 		return
 	for cell in cells:
@@ -133,9 +135,10 @@ def main():
 		t = threading.Thread(target=worker, args = (len(threads),len(config['users'])))
 		t.start()
 		threads.append(t)
+	time.sleep(2)
 	#wait for stop signal
 	while True:
-		command = raw_input('Type stop and enter to stop program and save data \ntype prog to see how much data has been gathered')
+		command = raw_input('Type stop and enter to stop program and save data\ntype prog to see how much data has been gathered ')
 		if command == 'stop':
 			going = False
 			break
