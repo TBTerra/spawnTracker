@@ -1,4 +1,4 @@
-# spawnTracker 0.0.3(alpha)
+# spawnTracker 0.0.4(alpha)
 ## Probably the most efficient large area, long duration tracker for pokemon go data mining
 
 You will need to provide a spawns.json file from [spawnScanner](https://github.com/TBTerra/spawnScan)
