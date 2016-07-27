@@ -157,10 +157,10 @@ def worker(wid,Tthreads):
 					cells = map['map_cells']
 				except KeyError:
 					print ('error getting map data for {}, {}'.format(sLat, sLng))
-					return
+					continue
 				except TypeError:
 					print ('error getting map data for {}, {}'.format(sLat, sLng))
-					return
+					continue
 				for cell in cells:
 					curTime = cell['current_timestamp_ms']
 					if 'wild_pokemons' in cell:
