@@ -52,48 +52,6 @@ def encode(cellid):
 	encoder._VarintEncoder()(output.append, cellid)
 	return ''.join(output)
 
-def doScan(sLat, sLng, sid, api):
-	api.set_position(sLat,sLng,0)
-	timestamp = "\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000"
-	cellid = get_cellid(sLat, sLng)
-	api.get_map_objects(latitude=f2i(sLat), longitude=f2i(sLng), since_timestamp_ms=timestamp, cell_id=cellid)
-	response_dict = api.call()
-	#print 'trying for poke'
-	try:
-		resp = response_dict['responses']
-		map = resp['GET_MAP_OBJECTS']
-		cells = map['map_cells']
-	except KeyError:
-		print ('error getting map data for {}, {}'.format(sLat, sLng))
-		return
-	except TypeError:
-		print ('error getting map data for {}, {}'.format(sLat, sLng))
-		return
-	for cell in cells:
-		curTime = cell['current_timestamp_ms']
-		if 'wild_pokemons' in cell:
-			for wild in cell['wild_pokemons']:
-				if wild['time_till_hidden_ms']>0:
-					timeSpawn = (curTime+(wild['time_till_hidden_ms']))-900000
-					if wild['spawnpoint_id'] == sid:
-						#print 'found poke'
-						pokes.append({'time':timeSpawn, 'sid':wild['spawnpoint_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'pid':wild['pokemon_data']['pokemon_id'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()})
-						global Pfound
-						Pfound += 1
-					elif wild['spawnpoint_id'] not in Shash:
-						print 'found new spawn'
-						gmSpawn = time.gmtime(timeSpawn//1000)
-						secSpawn = (gmSpawn.tm_min*60)+(gmSpawn.tm_sec)
-						hash = '{},{}'.format(secSpawn,wild['spawnpoint_id'])
-						Shash[wild['spawnpoint_id']] = secSpawn
-						if withinWork(wild['latitude'],wild['longitude']):
-							pass
-						else:
-							print 'not in work area'
-						#spawns.insert(SbSearch(secSpawn),{'time':secSpawn, 'sid':wild['spawnpoint_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()})
-						#if timeDif()>0
-						###do somthing here
-
 def curSec():
 	return (60 * time.gmtime().tm_min) + time.gmtime().tm_sec
 	
@@ -125,7 +83,7 @@ def worker(wid,Tthreads):
 		ownSpawns.append(spawns[i])
 	print 'work list for worker {} is {} scans long'.format(wid,len(ownSpawns))
 	#find start position
-	pos = SbSearch(ownSpawns, (curSec()+60)%3600)
+	pos = SbSearch(ownSpawns, (curSec()+3540)%3600)
 	#pos = SbSearch(ownSpawns, curSec())
 	#while timeDif(curSec(),ownSpawns[pos]['time']) < 60:
 	#	pos = ((pos+len(ownSpawns))-1) % len(ownSpawns)
@@ -136,6 +94,7 @@ def worker(wid,Tthreads):
 		if not api.login(config['auth_service'], config['users'][wid]['username'], config['users'][wid]['password']):
 			print 'worker {} unable to log in. stoping.'.format(wid)
 			return
+		print 'worker {} logged in'.format(wid)
 		#iterate over
 		while not paused:
 			if not going:
@@ -146,6 +105,7 @@ def worker(wid,Tthreads):
 				sLat = ownSpawns[pos]['lat']
 				sLng = ownSpawns[pos]['lng']
 				sid = ownSpawns[pos]['sid']
+				time.sleep(0.2)
 				api.set_position(sLat,sLng,0)
 				timestamp = "\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000"
 				cellid = get_cellid(sLat, sLng)
@@ -161,6 +121,7 @@ def worker(wid,Tthreads):
 				except TypeError:
 					print ('error getting map data for {}, {}'.format(sLat, sLng))
 					continue
+				gotit = False
 				for cell in cells:
 					curTime = cell['current_timestamp_ms']
 					if 'wild_pokemons' in cell:
@@ -168,10 +129,11 @@ def worker(wid,Tthreads):
 							if wild['time_till_hidden_ms']>0:
 								timeSpawn = (curTime+(wild['time_till_hidden_ms']))-900000
 								if wild['spawnpoint_id'] == sid:
-									#print 'found poke'
+									gotit = True
 									pokes.append({'time':timeSpawn, 'sid':wild['spawnpoint_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'pid':wild['pokemon_data']['pokemon_id'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()})
 									global Pfound
 									Pfound += 1
+									
 								elif wild['spawnpoint_id'] not in Shash:
 									print 'found new spawn'
 									gmSpawn = time.gmtime(timeSpawn//1000)
@@ -188,8 +150,11 @@ def worker(wid,Tthreads):
 										if timeDif(ownSpawns[pos]['time'],secSpawn)>0:#only bother to add it to the found pokes, if it has missed its scan window
 											pokeLog = {'time':timeSpawn, 'sid':wild['spawnpoint_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'pid':wild['pokemon_data']['pokemon_id'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()}
 											pokes.append(pokeLog)
+											Pfound += 1
 									else:
 										print 'not in work area'
+				if not gotit:
+					print 'couldnt find spawn'
 			else:
 				print 'posibly cant keep up. having to drop searches to catch up'
 			pos = (pos+1) % len(ownSpawns)
