@@ -1,14 +1,15 @@
 import os
+import logging
 import json
 import time
 from operator import itemgetter
 
 import threading
+import utils
 
-from pgoapi import PGoApi
-from pgoapi.utilities import f2i
+from pgoapi import pgoapi
+from pgoapi import utilities as util
 
-from google.protobuf.internal import encoder
 from s2sphere import CellId, LatLng
 
 pokes = []
@@ -32,25 +33,6 @@ def withinWork(lat, lng):
 			continue
 		return True
 	return False
-
-def get_cellid(lat, long):
-	origin = CellId.from_lat_lng(LatLng.from_degrees(lat, long)).parent(15)
-	walk = [origin.id()]
-
-	# 10 before and 10 after
-	next = origin.next()
-	prev = origin.prev()
-	for i in range(10):
-		walk.append(prev.id())
-		walk.append(next.id())
-		next = next.next()
-		prev = prev.prev()
-	return ''.join(map(encode, sorted(walk)))
-
-def encode(cellid):
-	output = []
-	encoder._VarintEncoder()(output.append, cellid)
-	return ''.join(output)
 
 def curSec():
 	return (60 * time.gmtime().tm_min) + time.gmtime().tm_sec
@@ -84,17 +66,11 @@ def worker(wid,Tthreads):
 	print 'work list for worker {} is {} scans long'.format(wid,len(ownSpawns))
 	#find start position
 	pos = SbSearch(ownSpawns, (curSec()+3540)%3600)
-	#pos = SbSearch(ownSpawns, curSec())
-	#while timeDif(curSec(),ownSpawns[pos]['time']) < 60:
-	#	pos = ((pos+len(ownSpawns))-1) % len(ownSpawns)
+	
+	api = pgoapi.PGoApi(provider=config['auth_service'], username=config['users'][wid]['username'], password=config['users'][wid]['password'], position_lat=0, position_lng=0, position_alt=0)
+	api.activate_signature(utils.get_encryption_lib_path())
+	
 	while True:
-		#login
-		api = PGoApi()
-		api.set_position(0,0,0)
-		if not api.login(config['auth_service'], config['users'][wid]['username'], config['users'][wid]['password']):
-			print 'worker {} unable to log in. stoping.'.format(wid)
-			return
-		print 'worker {} logged in'.format(wid)
 		#iterate over
 		while not paused:
 			if not going:
@@ -105,21 +81,34 @@ def worker(wid,Tthreads):
 				sLat = ownSpawns[pos]['lat']
 				sLng = ownSpawns[pos]['lng']
 				sid = ownSpawns[pos]['sid']
-				time.sleep(0.2)
 				api.set_position(sLat,sLng,0)
-				timestamp = "\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000"
-				cellid = get_cellid(sLat, sLng)
-				api.get_map_objects(latitude=f2i(sLat), longitude=f2i(sLng), since_timestamp_ms=timestamp, cell_id=cellid)
-				response_dict = api.call()
+				cell_ids = util.get_cell_ids(lat=sLat, long=sLng, radius=80)
+				timestamps = [0,] * len(cell_ids)
+				while True:
+					try:
+						response_dict = api.get_map_objects(latitude = sLat, longitude = sLng, since_timestamp_ms = timestamps, cell_id = cell_ids)
+					except  ServerSideRequestThrottlingException:
+						config['scanDelay'] += 0.5
+						print ('kk.. increasing sleep by 0.5 to [}').format(sleepperscan)
+						time.sleep(config['scanDelay'])
+						continue
+					except:
+						time.sleep(config['scanDelay'])
+						api.set_position(sLat,sLng,0)
+						time.sleep(config['scanDelay'])
+						continue
+					break
 				try:
 					resp = response_dict['responses']
 					map = resp['GET_MAP_OBJECTS']
 					cells = map['map_cells']
 				except KeyError:
-					print ('error getting map data for {}, {}'.format(sLat, sLng))
+					print ('thread {} error getting map data for {}, {}'.format(wid,sLat, sLng))
+					time.sleep(config['scanDelay'])
 					continue
 				except TypeError:
-					print ('error getting map data for {}, {}'.format(sLat, sLng))
+					print ('thread {} error getting map data for {}, {}'.format(wid,sLat, sLng))
+					time.sleep(config['scanDelay'])
 					continue
 				gotit = False
 				for cell in cells:
@@ -128,27 +117,27 @@ def worker(wid,Tthreads):
 						for wild in cell['wild_pokemons']:
 							if wild['time_till_hidden_ms']>0:
 								timeSpawn = (curTime+(wild['time_till_hidden_ms']))-900000
-								if wild['spawnpoint_id'] == sid:
+								if wild['spawn_point_id'] == sid:
 									gotit = True
-									pokes.append({'time':timeSpawn, 'sid':wild['spawnpoint_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'pid':wild['pokemon_data']['pokemon_id'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()})
+									pokes.append({'time':timeSpawn, 'sid':wild['spawn_point_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'pid':wild['pokemon_data']['pokemon_id'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()})
 									global Pfound
 									Pfound += 1
 									
-								elif wild['spawnpoint_id'] not in Shash:
+								elif wild['spawn_point_id'] not in Shash:
 									print 'found new spawn'
 									gmSpawn = time.gmtime(timeSpawn//1000)
 									secSpawn = (gmSpawn.tm_min*60)+(gmSpawn.tm_sec)
-									hash = '{},{}'.format(secSpawn,wild['spawnpoint_id'])
-									Shash[wild['spawnpoint_id']] = secSpawn
+									hash = '{},{}'.format(secSpawn,wild['spawn_point_id'])
+									Shash[wild['spawn_point_id']] = secSpawn
 									if withinWork(wild['latitude'],wild['longitude']):
-										spawnLog = {'time':secSpawn, 'sid':wild['spawnpoint_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()}
+										spawnLog = {'time':secSpawn, 'sid':wild['spawn_point_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()}
 										spawns.append(spawnLog)
 										index = SbSearch(ownSpawns,secSpawn)
 										ownSpawns.insert(index,spawnLog)
 										if pos>index:
 											pos += 1
 										if timeDif(ownSpawns[pos]['time'],secSpawn)>0:#only bother to add it to the found pokes, if it has missed its scan window
-											pokeLog = {'time':timeSpawn, 'sid':wild['spawnpoint_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'pid':wild['pokemon_data']['pokemon_id'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()}
+											pokeLog = {'time':timeSpawn, 'sid':wild['spawn_point_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'pid':wild['pokemon_data']['pokemon_id'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()}
 											pokes.append(pokeLog)
 											Pfound += 1
 									else:
@@ -158,6 +147,7 @@ def worker(wid,Tthreads):
 			else:
 				print 'posibly cant keep up. having to drop searches to catch up'
 			pos = (pos+1) % len(ownSpawns)
+			time.sleep(config['scanDelay'])
 		while paused:
 			time.sleep(1)
 
@@ -173,7 +163,7 @@ def saver():
 		#tell workers to stop
 		global paused, pokes
 		paused = True
-		time.sleep(0.5)
+		time.sleep(0.5)#dosnt garentee all workers have stoped, but should mean that all workers have got to their sleep sections
 		print 'pausing work to save (currently seen {} pokemon)'.format(Pfound)
 		#save the new pokes
 		if os.path.isfile('pokes.json'):
@@ -204,12 +194,16 @@ def main():
 		Shash[spawn['sid']] = spawn['time']
 	#sort spawn points
 	spawns.sort(key=itemgetter('time'))
-	print 'total of {} spawns to track'.format(len(spawns))
+	useThreads = ((len(spawns)-1)//len(config['users']))+1
+	print 'total of {} spawns to track, going to use {} threads'.format(len(spawns),useThreads)
+	if useThreads > len(config['users']):
+		print 'not enough threads in config file, stopping'
+		return
 	#launch threads
 	###todo: make it so it only launches the needed number of threads
 	threads = []
-	for user in config['users']:
-		t = threading.Thread(target=worker, args = (len(threads),len(config['users'])))
+	for i in range(useThreads):
+		t = threading.Thread(target=worker, args = (i,useThreads))
 		t.start()
 		threads.append(t)
 	saverT = threading.Thread(target=saver)
