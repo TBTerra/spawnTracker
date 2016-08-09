@@ -10,11 +10,12 @@ You will need to provide a spawns.json file from [spawnScanner](https://github.c
 config.json is compatible with spawnScanner, the work section is used to confine newly found spawns to within the search boundaries. if no work section is present then no boundaries are set
 
 ###installation
--use python 2.7
--pip install -r requirements.txt
--fill out config.json
--have a spawns.json from spawnScan
--run
+
+- use python 2.7
+- pip install -r requirements.txt
+- fill out config.json
+- have a spawns.json from spawnScan
+- run track.py
 
 ###Things to do
 - add some way of analysing and visualising the found data
