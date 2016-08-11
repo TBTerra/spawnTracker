@@ -8,6 +8,8 @@
 		[lat1,long1, lat2,long2],
 		[lat1,long1, lat2,long2]
 	],
+	"web_hooks": [
+	],
 	"stepsPerPassPerWorker": 300,
 	"scanDelay": 10.5
 }

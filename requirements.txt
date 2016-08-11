@@ -1,8 +1,11 @@
-protobuf>=3.0.0a3
+future==0.15.2
+geojson==1.3.3
+geopy==1.11.0
+gpsoauth==0.3.0
+protobuf==3.0.0
+protobuf-to-dict==0.1.0
+pycryptodomex==3.4.2
 requests==2.10.0
 s2sphere==0.2.4
-gpsoauth==0.3.0
-protobuf-to-dict==0.1.0
-geojson
-six
-xxhash
+six==1.10.0
+xxhash==0.6.1
