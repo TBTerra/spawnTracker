@@ -9,6 +9,7 @@ import utils
 
 from pgoapi import pgoapi
 from pgoapi import utilities as util
+from pgoapi.exceptions import ServerSideRequestThrottlingException
 
 from s2sphere import CellId, LatLng
 
