@@ -9,8 +9,12 @@ import utils
 
 from pgoapi import pgoapi
 from pgoapi import utilities as util
+from pgoapi.exceptions import ServerSideRequestThrottlingException
 
 from s2sphere import CellId, LatLng
+
+import requests
+from base64 import b64encode
 
 pokes = []
 spawns = []
@@ -36,7 +40,7 @@ def withinWork(lat, lng):
 
 def curSec():
 	return (60 * time.gmtime().tm_min) + time.gmtime().tm_sec
-	
+
 def timeDif(a,b):#timeDif of -1800 to +1800 secs
 	dif = a-b
 	if (dif < -1800):
@@ -56,7 +60,33 @@ def SbSearch(Slist, T):
 		else:
 			last = mp
 	return first
+
+def sendToWebHook(data, p):
+	if not 'web_hooks' in config or len(config['web_hooks']) < 1:
+		return
 	
+	payload = {
+		"type": "pokemon",
+		"message": {
+			"encounter_id": b64encode(str(p['encounter_id'])),
+			"spawnpoint_id": data["sid"],
+			"latitude": data["lat"],
+			"longitude": data["lng"],
+			"pokemon_id": data["pid"],
+			"disappear_time": (data["time"]+900000)/1000,
+			"last_modified_time": p["last_modified_timestamp_ms"],
+			"time_until_hidden_ms": p["time_till_hidden_ms"]
+		}
+	}
+
+	for url in config['web_hooks']:
+		try:
+			requests.post(url, json=push, timeout=(None, 1))
+		except requests.exceptions.ReadTimeout:
+			print 'Response timeout on webhook endpoint %s' % url
+		except requests.exceptions.RequestException as e:
+			print e
+
 def worker(wid,Tthreads):
 	global spawns, Shash, going
 	#make own spawn list
@@ -66,10 +96,10 @@ def worker(wid,Tthreads):
 	print 'work list for worker {} is {} scans long'.format(wid,len(ownSpawns))
 	#find start position
 	pos = SbSearch(ownSpawns, (curSec()+3540)%3600)
-	
+
 	api = pgoapi.PGoApi(provider=config['auth_service'], username=config['users'][wid]['username'], password=config['users'][wid]['password'], position_lat=0, position_lng=0, position_alt=0)
 	api.activate_signature(utils.get_encryption_lib_path())
-	
+
 	while True:
 		#iterate over
 		while not paused:
@@ -119,10 +149,12 @@ def worker(wid,Tthreads):
 								timeSpawn = (curTime+(wild['time_till_hidden_ms']))-900000
 								if wild['spawn_point_id'] == sid:
 									gotit = True
-									pokes.append({'time':timeSpawn, 'sid':wild['spawn_point_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'pid':wild['pokemon_data']['pokemon_id'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()})
+									curPoke = {'time':timeSpawn, 'sid':wild['spawn_point_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'pid':wild['pokemon_data']['pokemon_id'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()}
+									pokes.append(curPoke)
+									sendToWebHook(curPoke, wild)
 									global Pfound
 									Pfound += 1
-									
+
 								elif wild['spawn_point_id'] not in Shash:
 									print 'found new spawn'
 									gmSpawn = time.gmtime(timeSpawn//1000)
@@ -138,6 +170,7 @@ def worker(wid,Tthreads):
 											pos += 1
 										if timeDif(ownSpawns[pos]['time'],secSpawn)>0:#only bother to add it to the found pokes, if it has missed its scan window
 											pokeLog = {'time':timeSpawn, 'sid':wild['spawn_point_id'], 'lat':wild['latitude'], 'lng':wild['longitude'], 'pid':wild['pokemon_data']['pokemon_id'], 'cell':CellId.from_lat_lng(LatLng.from_degrees(wild['latitude'], wild['longitude'])).to_token()}
+											sendToWebHook(pokeLog, wild)
 											pokes.append(pokeLog)
 											Pfound += 1
 									else:
@@ -234,7 +267,7 @@ def main():
 		f = open('pokes.json','w')
 		json.dump(pokes,f)
 		f.close()
-	
+
 	with open('spawns.json','w') as file:
 		json.dump(spawns,file)
 		file.close()
